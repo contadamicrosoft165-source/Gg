@@ -1,0 +1,206 @@
+local Players        = game:GetService("Players")
+local VirtualInput   = game:GetService("VirtualInputManager")
+local CoreGui        = game:GetService("CoreGui")
+local HttpService    = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Constants
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1450831306018525214/YVPpj6l-jwX8OfyGrs-kWMm3ka2H5P1jowchRPsYUcs16K3aSGP2oVvinUHhepfg71aa"
+local INGREDIENTS  = { "water", "gelatin", "sugar block bag" }
+local MS_SIZES     = { "small", "medium", "large" }
+
+-- â”€â”€â”€ GUI Setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+-- Destroy existing GUI if present
+local existing = CoreGui:FindFirstChild("AutoMSGui")
+if existing then existing:Destroy() end
+
+local screenGui = Instance.new("ScreenGui", CoreGui)
+screenGui.Name         = "AutoMSGui"
+screenGui.ResetOnSpawn = false
+
+local frame = Instance.new("Frame", screenGui)
+frame.Size             = UDim2.new(0, 250, 0, 260)
+frame.Position         = UDim2.new(0.5, -125, 0.5, -100)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+frame.Active           = true
+frame.Draggable        = true
+Instance.new("UICorner", frame)
+
+local function makeLabel(parent, size, pos, textColor, font, textSize, text, xAlign, yAlign)
+    local label = Instance.new("TextLabel", parent)
+    label.Size                = size
+    label.Position            = pos
+    label.BackgroundTransparency = 1
+    label.TextColor3          = textColor
+    label.Font                = font
+    label.TextSize            = textSize
+    label.Text                = text
+    if xAlign then label.TextXAlignment = xAlign end
+    if yAlign then label.TextYAlignment = yAlign end
+    return label
+end
+
+-- Title
+makeLabel(frame,
+    UDim2.new(1, 0, 0, 26),
+    UDim2.new(0, 0, 0, 5),
+    Color3.new(1, 1, 1),
+    Enum.Font.GothamBold, 15,
+    "Jawa Hub Auto Marshmallow"
+)
+
+-- Status labels
+local lblRemaining = makeLabel(frame,
+    UDim2.new(1, -20, 0, 20),
+    UDim2.new(0, 10, 0, 35),
+    Color3.fromRGB(255, 255, 180),
+    Enum.Font.GothamBold, 14,
+    "Sisa MS: 0"
+)
+
+local lblProduced = makeLabel(frame,
+    UDim2.new(1, -20, 0, 60),
+    UDim2.new(0, 10, 0, 60),
+    Color3.fromRGB(200, 255, 200),
+    Enum.Font.Gotham, 13,
+    "MS Sudah Jadi:\nSmall: 0\nMedium: 0\nLarge: 0",
+    Enum.TextXAlignment.Left,
+    Enum.TextYAlignment.Top
+)
+
+local lblIngredients = makeLabel(frame,
+    UDim2.new(1, -20, 0, 60),
+    UDim2.new(0, 10, 0, 130),
+    Color3.fromRGB(200, 200, 255),
+    Enum.Font.Gotham, 13,
+    "Water: 0\nSugar Block Bag: 0\nGelatin: 0",
+    Enum.TextXAlignment.Left,
+    Enum.TextYAlignment.Top
+)
+
+local btnToggle = Instance.new("TextButton", frame)
+btnToggle.Size            = UDim2.new(1, -20, 0, 35)
+btnToggle.Position        = UDim2.new(0, 10, 1, -45)
+btnToggle.Text            = "Start AutoMS"
+btnToggle.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+btnToggle.TextColor3      = Color3.new(1, 1, 1)
+btnToggle.Font            = Enum.Font.GothamBold
+btnToggle.TextSize        = 16
+Instance.new("UICorner", btnToggle)
+
+-- â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+local running = false
+
+local function countIngredients()
+    local backpack   = LocalPlayer:WaitForChild("Backpack")
+    local character  = LocalPlayer.Character
+    local counts     = { water = 0, gelatin = 0, ["sugar block bag"] = 0 }
+    local msCounts   = { small = 0, medium = 0, large = 0 }
+
+    local function scanContainer(container)
+        for _, item in ipairs(container:GetChildren()) do
+            local name = item.Name:lower()
+            for _, ingredient in ipairs(INGREDIENTS) do
+                if name:find(ingredient) then
+                    counts[ingredient] = (counts[ingredient] or 0) + 1
+                end
+            end
+            for _, size in ipairs(MS_SIZES) do
+                if name:find(size) then
+                    msCounts[size] = (msCounts[size] or 0) + 1
+                end
+            end
+        end
+    end
+
+    scanContainer(backpack)
+    if character then scanContainer(character) end
+    return counts, msCounts
+end
+
+local function updateUI(counts, msCounts)
+    local total = msCounts.small + msCounts.medium + msCounts.large
+    lblRemaining.Text  = "Sisa MS: " .. total
+    lblProduced.Text   = ("MS Sudah Jadi:\nSmall: %d\nMedium: %d\nLarge: %d")
+                            :format(msCounts.small, msCounts.medium, msCounts.large)
+    lblIngredients.Text = ("Water: %d\nSugar Block Bag: %d\nGelatin: %d")
+                            :format(counts["water"], counts["sugar block bag"], counts["gelatin"])
+end
+
+local function equipAndUse(itemName)
+    local item = LocalPlayer.Backpack:FindFirstChild(itemName)
+    if not item then return false end
+    item.Parent = LocalPlayer.Character
+    task.wait(0.05)
+    VirtualInput:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
+    task.wait(0.1)
+    VirtualInput:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    return true
+end
+
+-- â”€â”€â”€ Main Loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+local function autoMSLoop()
+    while running do
+        local counts, msCounts = countIngredients()
+        updateUI(counts, msCounts)
+
+        local hasIngredients = counts["water"] > 0
+                            and counts["gelatin"] > 0
+                            and counts["sugar block bag"] > 0
+
+        if hasIngredients then
+            equipAndUse("Water")
+        end
+
+        task.wait(0.5)
+    end
+end
+
+-- â”€â”€â”€ Button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+btnToggle.MouseButton1Click:Connect(function()
+    running = not running
+    if running then
+        btnToggle.Text            = "Stop AutoMS"
+        btnToggle.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+        task.spawn(autoMSLoop)
+    else
+        btnToggle.Text            = "Start AutoMS"
+        btnToggle.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+    end
+end)
+
+-- â”€â”€â”€ Initial UI Refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+task.spawn(function()
+    task.wait(1)
+    local counts, msCounts = countIngredients()
+    updateUI(counts, msCounts)
+end)
+
+-- â”€â”€â”€ Webhook â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+task.spawn(function()
+    local payload = HttpService:JSONEncode({
+        embeds = {{
+            color       = 65280,
+            title       = "Jawa Hub WebHook",
+            description = "Pemain **" .. LocalPlayer.Name .. "** telah menggunakan Jawa Hub auto ms",
+        }}
+    })
+
+    local sendFn = (syn and syn.request) or http_request or request
+    if sendFn then
+        sendFn({
+            Url     = WEBHOOK_URL,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = payload,
+        })
+    end
+end)
